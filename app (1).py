@@ -1,8 +1,8 @@
-
 import streamlit as st
 import pandas as pd
-import seaborn as sns
+import numpy as np
 import plotly.express as px
+from scipy import stats
 
 # KONFIGURASI HALAMAN
 
@@ -18,9 +18,9 @@ st.title("My Iris Dataset Dashboard 🌺")
 
 st.write(
     """
-    Dashboard ini digunakan untuk mengeksplorasi
-    hubungan antarvariabel pada dataset Iris melalui
-    visualisasi data interaktif.
+    Dashboard ini digunakan untuk mengeksplorasi data multivariat
+    pada dataset Iris, meliputi korelasi, uji normalitas, dan
+    deteksi outlier melalui visualisasi data interaktif.
     """
 )
 
@@ -28,9 +28,11 @@ st.divider()
 
 # MEMUAT DATASET
 
+
 @st.cache_data
 def load_data():
-    return sns.load_dataset("iris")
+    return px.data.iris().drop(columns="species_id")
+
 
 df = load_data()
 
@@ -86,175 +88,139 @@ filtered_df = df[
     df["species"].isin(selected_species)
 ]
 
-# STATISTIK DESKRIPTIF
-
-st.header("Basic Statistics")
-
-st.write(
-    "Statistik deskriptif untuk empat variabel numerik."
-)
-
-st.dataframe(
-    filtered_df[attributes].describe(),
-    use_container_width=True
-)
-
-# FUNGSI VISUALISASI PAIRWISE SCATTER PLOT
-
-def create_pairplot(data, attributes):
-
-    fig = px.scatter_matrix(
-        data,
-        dimensions=attributes,
-        color="species",
-        opacity=0.6,
-        title="Pairwise Scatter Plot"
-    )
-
-    fig.update_traces(
-        diagonal_visible=False
-    )
-
-    fig.update_layout(
-        height=750
-    )
-
-    return fig
-
-# FUNGSI HISTOGRAM
-
-def create_histogram(data, attribute):
-
-    fig = px.histogram(
-        data,
-        x=attribute,
-        color="species",
-        marginal="box",
-        barmode="overlay",
-        opacity=0.7,
-        title=f"Histogram of {attribute}"
-    )
-
-    fig.update_layout(
-        hovermode="x unified"
-    )
-
-    return fig
-
-# FUNGSI VIOLIN PLOT
-
-def create_violin_plot(
-    data,
-    attribute,
-    show_points=True
-):
-
-    points = "all" if show_points else False
-
-    fig = px.violin(
-        data,
-        x="species",
-        y=attribute,
-        color="species",
-        box=True,
-        points=points,
-        title=f"Violin Plot of {attribute}"
-    )
-
-    return fig
-
-# VISUALISASI BIVARIAT: SCATTER MATRIX
-
-st.header("Data Visualization")
-
-st.subheader(
-    "Pairwise Scatter Plot (All Attributes)"
-)
-
-st.write(
-    """
-    Scatter matrix digunakan untuk mengeksplorasi
-    hubungan setiap pasangan variabel numerik.
-    Warna menunjukkan spesies bunga.
-    """
-)
-
 if filtered_df.empty:
+    st.warning("Pilih minimal satu spesies pada sidebar.")
+    st.stop()
 
-    st.warning(
-        "Pilih minimal satu spesies pada sidebar."
+num = filtered_df[attributes]
+
+# 1. DATA
+
+st.header("1. Data")
+
+st.dataframe(filtered_df.head())
+
+st.dataframe(num.describe().round(2))
+
+# 2. KORELASI
+
+st.header("2. Korelasi")
+
+if len(filtered_df) >= 3:
+
+    heatmap_fig = px.imshow(
+        num.corr().round(2),
+        text_auto=True,
+        zmin=-1,
+        zmax=1,
+        color_continuous_scale="RdBu_r",
+        title="Correlation Heatmap"
+    )
+
+    st.plotly_chart(heatmap_fig)
+
+else:
+
+    st.info("Pilih minimal tiga data untuk melihat korelasi.")
+
+# 3. SCATTERPLOT MATRIX
+
+st.header("3. Scatterplot Matrix")
+
+pairplot_fig = px.scatter_matrix(
+    filtered_df,
+    dimensions=attributes,
+    color="species",
+    opacity=0.6,
+    title="Pairwise Scatter Plot"
+)
+
+pairplot_fig.update_traces(
+    diagonal_visible=False
+)
+
+pairplot_fig.update_layout(
+    height=750
+)
+
+st.plotly_chart(pairplot_fig)
+
+# 4. UJI NORMALITAS
+
+st.header("4. Uji Normalitas (Shapiro-Wilk)")
+
+st.write(
+    """
+    H0: data berdistribusi normal. H0 ditolak jika p-value
+    kurang dari 0,05.
+    """
+)
+
+if len(filtered_df) >= 3:
+
+    hasil = []
+    for c in num.columns:
+        stat, p = stats.shapiro(num[c].dropna()[:5000])
+        hasil.append([c, stat, p, "Normal" if p > 0.05 else "Tidak normal"])
+
+    st.dataframe(
+        pd.DataFrame(
+            hasil,
+            columns=["Variabel", "Statistik", "p-value", "Kesimpulan"]
+        )
     )
 
 else:
 
-    pairplot_fig = create_pairplot(
-        filtered_df,
-        attributes
-    )
+    st.info("Uji normalitas membutuhkan minimal tiga data.")
 
-    st.plotly_chart(
-        pairplot_fig,
-        use_container_width=True
-    )
-
-# VISUALISASI DISTRIBUSI ATRIBUT
-
-st.subheader("Single Attribute Distribution")
-
-st.write(
-    """
-    Pilih satu atribut untuk membandingkan distribusinya
-    pada ketiga spesies bunga.
-    """
+hist_fig = px.histogram(
+    filtered_df,
+    x=selected_attribute,
+    color="species",
+    marginal="box",
+    barmode="overlay",
+    opacity=0.7,
+    title=f"Histogram of {selected_attribute}"
 )
 
-if not filtered_df.empty:
+hist_fig.update_layout(
+    hovermode="x unified"
+)
 
-    col1, col2 = st.columns(2)
+st.plotly_chart(hist_fig)
 
-    # Histogram
-    with col1:
+# 5. DETEKSI OUTLIER
 
-        hist_fig = create_histogram(
-            filtered_df,
-            selected_attribute
-        )
+st.header("5. Deteksi Outlier (IQR)")
 
-        st.plotly_chart(
-            hist_fig,
-            use_container_width=True
-        )
+show_points = st.checkbox(
+    "Show individual points",
+    value=True
+)
 
-    # Violin plot
-    with col2:
+points = "all" if show_points else False
 
-        show_points = st.checkbox(
-            "Show individual points",
-            value=True
-        )
+for c in num.columns:
+    q1, q3 = num[c].quantile(0.25), num[c].quantile(0.75)
+    iqr = q3 - q1
+    out = num[(num[c] < q1 - 1.5 * iqr) | (num[c] > q3 + 1.5 * iqr)]
+    st.write(f"{c}: {len(out)} outlier")
 
-        violin_fig = create_violin_plot(
-            filtered_df,
-            selected_attribute,
-            show_points
-        )
-
-        st.plotly_chart(
-            violin_fig,
-            use_container_width=True
-        )
-
-# TABEL DATA
-
-with st.expander("View Dataset"):
-
-    st.dataframe(
+    violin_fig = px.violin(
         filtered_df,
-        use_container_width=True
+        x="species",
+        y=c,
+        color="species",
+        box=True,
+        points=points,
+        title=f"Violin Plot of {c}"
     )
+
+    st.plotly_chart(violin_fig)
 
 st.divider()
 
 st.caption(
-    "Praktikum Eksplorasi dan Visualisasi Data Bivariat"
+    "Praktikum Eksplorasi dan Visualisasi Data Multivariat"
 )
